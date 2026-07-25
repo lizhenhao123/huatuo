@@ -2,15 +2,23 @@ name: OS Distro QEMU Test
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qemu-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   # start VMs and test in them
   qemu-vm:
     name: Test in VM (${{ matrix.arch }} ${{ matrix.os }})
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
     env:
       ACT_RUN: false
     strategy:
@@ -79,6 +87,6 @@ jobs:
           < .github/workflows/scripts/qemu-2-run-in-vm.sh
 
       - name: Cleanup VM
-        if: success()
+        if: always()
         run: |
           .github/workflows/scripts/qemu-3-cleanup.sh ${{ matrix.vm_name }} ${{ matrix.vm_mac }} ${{ matrix.vm_ip }}
