@@ -1,6 +1,6 @@
 Name: huatuo-bamai
-Version: 2.1.0
-Release: 3%{?dist}
+Version: 2.2.0
+Release: 1%{?dist}
 Summary: Huatuo is a cloud-native operating system observability project
 
 # Disable debug package and build-id generation
@@ -11,7 +11,7 @@ Group: System Environment/Daemons
 URL: https://huatuo.tech/
 License: APLv2
 
-Source0: https://github.com/ccfos/huatuo/archive/tags/tags/v%{version}.tar.gz
+Source0: https://github.com/ccfos/huatuo/archive/refs/tags/v%{version}.tar.gz
 Source1: huatuo-bamai.service
 Source2: grafana-example.zip
 
@@ -173,6 +173,10 @@ else
 fi
 
 %changelog
+* Sat Jul 25 2026 lizhenhao123 <zhenhao__Li@163.com> - 2.2.0-1
+- Align the RPM package version with the application release
+- Fix the GitHub source archive URL
+
 * Mon Dec 23 2025 panzerzheng <panzerzheng@tencent.com> - 2.1.0-3
 - [Type] optimization
 - [DESC] Optimized Grafana configuration files packaging
