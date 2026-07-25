@@ -18,8 +18,9 @@ sudo install -m 0600 deploy/lighthouse/.env.example /opt/huatuo/.env
 sudoedit /opt/huatuo/.env
 ```
 
-Use immutable image tags. Generate all three secrets with
-`openssl rand -hex 32`. Never commit `/opt/huatuo/.env`.
+Use the immutable `sha-<full commit SHA>` image tag published for the release
+commit. Generate all three secrets with `openssl rand -hex 32`. Never commit
+`/opt/huatuo/.env`.
 
 ## Deploy or roll back
 
@@ -67,4 +68,5 @@ Run it as `ubuntu`, set a 1200-second timeout, and store its command ID in
 that command and the target instance. Deny `RunCommand`, `CreateCommand`,
 and `ModifyCommand`; the CI identity must not be able to execute arbitrary
 scripts. The `deploy Lighthouse` workflow accepts a commit on `main` and an
-immutable image tag, then invokes the fixed command with those parameters.
+image tag that must equal `sha-<revision>`, then invokes the fixed command
+with those parameters.

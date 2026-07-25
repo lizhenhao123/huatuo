@@ -47,8 +47,9 @@ jobs:
           git fetch origin main
           revision=$(git rev-parse HEAD)
           git merge-base --is-ancestor "${revision}" origin/main
-          if [[ ! "${IMAGE_TAG}" =~ ^[A-Za-z0-9_.-]+$ ]]; then
-            echo "image_tag contains unsupported characters" >&2
+          expected_image_tag="sha-${revision}"
+          if [[ "${IMAGE_TAG}" != "${expected_image_tag}" ]]; then
+            echo "image_tag must be ${expected_image_tag}" >&2
             exit 1
           fi
           if [[ -z "${TENCENTCLOUD_REGION}" ||

@@ -35,8 +35,9 @@ if [[ ! "${revision}" =~ ^[[:xdigit:]]{40}$ ]]; then
 	echo "revision must be a full 40-character commit hash" >&2
 	exit 1
 fi
-if [[ ! "${image_tag}" =~ ^[A-Za-z0-9_.-]+$ ]]; then
-	echo "image tag contains unsupported characters" >&2
+expected_image_tag="sha-${revision}"
+if [[ "${image_tag}" != "${expected_image_tag}" ]]; then
+	echo "image tag must be ${expected_image_tag}" >&2
 	exit 1
 fi
 if [[ ! "${repository}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
