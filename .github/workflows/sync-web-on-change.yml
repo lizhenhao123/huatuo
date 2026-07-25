@@ -1,5 +1,12 @@
 name: sync web when content changes
 
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-web-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   WEB_ROOT_DIR: huatuo-web
 
@@ -20,12 +27,11 @@ on:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: checkout huatuo
         uses: actions/checkout@v4
         with:
-          repository: ccfos/huatuo
-          ref: main
           path: huatuo
       - name: checkout huatuo web
         uses: actions/checkout@v4
@@ -33,7 +39,6 @@ jobs:
           repository: hao022/huatuo-web
           ref: main
           path: huatuo-web
-          token: ${{ secrets.HUATUO_RELEASE_TOKEN }}
       - name: setup Hugo
         uses: peaceiris/actions-hugo@v3
         with:
@@ -57,6 +62,7 @@ jobs:
           ./build.sh
       # the web pages
       - name: deploy github
+        if: github.event_name != 'pull_request'
         uses: peaceiris/actions-gh-pages@v3
         with:
           personal_token: ${{ secrets.HUATUO_RELEASE_TOKEN }}
@@ -71,6 +77,7 @@ jobs:
           user_name: 'huatuo-teams[bot]'
           user_email: 'huatuo-teams[bot]@users.noreply.github.com'
       - name: deploy server, docs web
+        if: github.event_name != 'pull_request'
         uses: easingthemes/ssh-deploy@main
         env:
           SSH_PRIVATE_KEY: ${{ secrets.REMOTE_WEB_SSH_KEY }}
@@ -80,6 +87,7 @@ jobs:
           REMOTE_USER: ${{ secrets.REMOTE_WEB_USER }}
           TARGET: ${{ secrets.REMOTE_DOC_TARGET }}
       - name: deploy server, main web
+        if: github.event_name != 'pull_request'
         uses: easingthemes/ssh-deploy@main
         env:
           SSH_PRIVATE_KEY: ${{ secrets.REMOTE_WEB_SSH_KEY }}
