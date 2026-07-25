@@ -224,6 +224,37 @@ curl -sS \
 和 `data.has_more` 描述分页。任务尚未分配 Agent 任务 ID 时，接口返回
 `400 Bad Request`。
 
+#### 导出合并后的 pprof 或 SVG
+
+导出接口根据剖析类型、时间范围和精确目标标签合并存储中的快照：
+
+```bash
+curl -sS --get \
+  -H "Authorization: Bearer ${USER_ID}" \
+  --data-urlencode \
+  "profile_type=process_cpu:cpu:nanoseconds:cpu:nanoseconds" \
+  --data-urlencode 'selector={hostname="node-a"}' \
+  --data-urlencode "start=${START_MILLISECONDS}" \
+  --data-urlencode "end=${END_MILLISECONDS}" \
+  -o profile.pb.gz \
+  "${API_BASE}/v1/profiles/flamegraph/export/pprof"
+
+curl -sS --get \
+  -H "Authorization: Bearer ${USER_ID}" \
+  --data-urlencode \
+  "profile_type=process_cpu:cpu:nanoseconds:cpu:nanoseconds" \
+  --data-urlencode 'selector={hostname="node-a"}' \
+  --data-urlencode "start=${START_MILLISECONDS}" \
+  --data-urlencode "end=${END_MILLISECONDS}" \
+  -o flamegraph.svg \
+  "${API_BASE}/v1/profiles/flamegraph/export/svg"
+```
+
+选择器接受精确的 `id`、`hostname`、`container_id` 或
+`container_hostname` 匹配，并且至少需要一个目标标签。服务会先统计匹配
+文档数，再分页读取。匹配超过 10,000 个文档时返回
+`422 Unprocessable Entity`，此时需要缩小时间范围。
+
 ### 7. 停止任务
 
 只有 `pending` 或 `running` 状态的任务可以停止。`PATCH` 请求的 `status` 只接受 `stopped`：
