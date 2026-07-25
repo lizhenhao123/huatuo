@@ -133,7 +133,9 @@ golangci-lint: gen-build
 	@golangci-lint run -v ./... --timeout=5m --config .golangci.yaml
 
 vendor:
-	@go mod tidy; go mod verify; go mod vendor
+	@go mod tidy
+	@go mod verify
+	@go mod vendor
 
 clean:
 	@rm -rf _output
