@@ -58,3 +58,64 @@ func TestBuildProfileAggregationQueryAddsTracerIDOnce(t *testing.T) {
 		t.Fatalf("query filters = %#v, want %#v", query.Filters, want)
 	}
 }
+
+func TestProfileAggregationQueryKeepsHostOnlySemantics(t *testing.T) {
+	query := buildProfileAggregationQuery(&SearchFilter{Hostname: "node-a"})
+	want := []driver.Filter{
+		{
+			Field: profileFieldHostname + ".keyword",
+			Op:    driver.OpEq,
+			Value: "node-a",
+		},
+		{
+			Field: profileFieldContainerHostname,
+			Op:    driver.OpEq,
+			Value: "",
+		},
+	}
+
+	if !reflect.DeepEqual(query.Filters, want) {
+		t.Fatalf("query filters = %#v, want %#v", query.Filters, want)
+	}
+}
+
+func TestProfileAggregationQueryCombinesHostAndContainer(t *testing.T) {
+	query := buildProfileAggregationQuery(&SearchFilter{
+		Hostname:          "node-a",
+		ContainerHostname: "worker",
+	})
+	want := []driver.Filter{
+		{
+			Field: profileFieldHostname + ".keyword",
+			Op:    driver.OpEq,
+			Value: "node-a",
+		},
+		{
+			Field: profileFieldContainerHostname + ".keyword",
+			Op:    driver.OpEq,
+			Value: "worker",
+		},
+	}
+
+	if !reflect.DeepEqual(query.Filters, want) {
+		t.Fatalf("query filters = %#v, want %#v", query.Filters, want)
+	}
+}
+
+func TestProfileAggregationQueryCanIncludeContainerCandidatesForHost(t *testing.T) {
+	query := buildProfileAggregationQuery(&SearchFilter{
+		Hostname:                 "node-a",
+		IncludeContainerProfiles: true,
+	})
+	want := []driver.Filter{
+		{
+			Field: profileFieldHostname + ".keyword",
+			Op:    driver.OpEq,
+			Value: "node-a",
+		},
+	}
+
+	if !reflect.DeepEqual(query.Filters, want) {
+		t.Fatalf("query filters = %#v, want %#v", query.Filters, want)
+	}
+}

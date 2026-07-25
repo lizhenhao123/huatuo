@@ -82,16 +82,17 @@ type ProfileDocument struct {
 
 // SearchFilter defines the search filter.
 type SearchFilter struct {
-	ID                string
-	Hostname          string
-	ContainerID       string
-	ContainerHostname string
-	TracerID          string
-	StartTime         time.Time
-	EndTime           time.Time
-	ProfileType       string
-	Limit             int
-	Offset            int
+	ID                       string
+	Hostname                 string
+	ContainerID              string
+	ContainerHostname        string
+	IncludeContainerProfiles bool
+	TracerID                 string
+	StartTime                time.Time
+	EndTime                  time.Time
+	ProfileType              string
+	Limit                    int
+	Offset                   int
 }
 
 // ProfileStorage implements profile document queries on top of the new storage backend.
@@ -299,19 +300,11 @@ func buildProfileAggregationQuery(filter *SearchFilter) driver.Query {
 		})
 	}
 	if filter.Hostname != "" {
-		query.Filters = append(
-			query.Filters,
-			driver.Filter{
-				Field: profileFieldHostname + ".keyword",
-				Op:    driver.OpEq,
-				Value: filter.Hostname,
-			},
-			driver.Filter{
-				Field: profileFieldContainerHostname,
-				Op:    driver.OpEq,
-				Value: "",
-			},
-		)
+		query.Filters = append(query.Filters, driver.Filter{
+			Field: profileFieldHostname + ".keyword",
+			Op:    driver.OpEq,
+			Value: filter.Hostname,
+		})
 	}
 	if filter.ContainerID != "" {
 		query.Filters = append(query.Filters, driver.Filter{
@@ -325,6 +318,12 @@ func buildProfileAggregationQuery(filter *SearchFilter) driver.Query {
 			Field: profileFieldContainerHostname + ".keyword",
 			Op:    driver.OpEq,
 			Value: filter.ContainerHostname,
+		})
+	} else if filter.Hostname != "" && !filter.IncludeContainerProfiles {
+		query.Filters = append(query.Filters, driver.Filter{
+			Field: profileFieldContainerHostname,
+			Op:    driver.OpEq,
+			Value: "",
 		})
 	}
 
