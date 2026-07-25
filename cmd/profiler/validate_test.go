@@ -64,6 +64,15 @@ func TestCLIProfileTypeAndRemovedFlags(t *testing.T) {
 			},
 		},
 		{
+			name: "native spinlock contention",
+			args: []string{
+				"--type", "lock",
+				"--language", "c",
+				"--pid", strconv.Itoa(os.Getpid()),
+				"--lock-type", "spinlock",
+			},
+		},
+		{
 			name:      "native mutex contention requires a target",
 			args:      []string{"--type", "lock", "--language", "c"},
 			wantError: "exactly one of --container-id or --pid must be provided",
@@ -292,6 +301,26 @@ func TestValidateProfilerFlagCompatibility(t *testing.T) {
 			language: "c",
 			typ:      "lock",
 			args:     []string{"--lock-wait-threshold", "10us"},
+		},
+		{
+			name:     "native spinlock",
+			language: "c",
+			typ:      "lock",
+			args:     []string{"--lock-type", "spinlock"},
+		},
+		{
+			name:      "invalid native lock type",
+			language:  "c",
+			typ:       "lock",
+			args:      []string{"--lock-type", "rwlock"},
+			wantError: "--lock-type must be mutex or spinlock",
+		},
+		{
+			name:      "CPU lock type",
+			language:  "c",
+			typ:       "cpu",
+			args:      []string{"--lock-type", "mutex"},
+			wantError: "--lock-type is supported only by native lock profiling",
 		},
 		{
 			name:      "CPU mutex wait threshold",

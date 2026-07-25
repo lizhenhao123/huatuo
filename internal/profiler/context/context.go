@@ -174,7 +174,7 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 		MemoryMode:                mode,
 		PhysicalMemoryProbability: cliCtx.Uint("physical-memory-probability"),
 		LockMode:                  lockModeForType(typ),
-		LockType:                  lockTypeForType(typ),
+		LockType:                  lockTypeForType(cliCtx, typ),
 
 		TracerID: cliCtx.String("tracer-id"),
 
@@ -191,9 +191,12 @@ func lockModeForType(typ profiling.Type) profiling.LockMode {
 	return profiling.LockModeUnknown
 }
 
-func lockTypeForType(typ profiling.Type) profiling.LockType {
+func lockTypeForType(
+	cliCtx *cli.Context,
+	typ profiling.Type,
+) profiling.LockType {
 	if typ == profiling.TypeLock {
-		return profiling.LockTypeMutex
+		return profiling.LockType(cliCtx.String("lock-type"))
 	}
 	return profiling.LockTypeUnknown
 }

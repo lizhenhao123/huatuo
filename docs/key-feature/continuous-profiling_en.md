@@ -344,7 +344,8 @@ Native profiling options:
 | `--memory-mode` | None | Native memory, Java memory | Memory profiling mode; required with `--type memory` |
 | `--cpuid` | All CPUs | Native CPU | Comma-separated CPU list or ranges, for example `1,3,5-10` |
 | `--thread-group` | `false` | Native | Also profile other threads in the target PID's thread group |
-| `--lock-wait-threshold` | `1us` | Native lock | Minimum mutex contention wait included in the profile |
+| `--lock-type` | `mutex` | Native lock | Kernel lock type: `mutex` or `spinlock` |
+| `--lock-wait-threshold` | `1us` | Native lock | Minimum contention wait included in the profile |
 | `--physical-memory-probability` | `100` | Native physical memory | Physical memory event sampling probability from 1 to 100 |
 | `--log-bpf-debug` | `false` | Native | Emit BPF debug events; not recommended for normal profiling |
 
@@ -413,10 +414,12 @@ sudo _output/bin/profiler \
 
 `--physical-memory-probability` applies only to `physical_alloc` and `physical_usage`. Lowering it reduces processing for high-frequency memory events, but flame-graph values are then estimates based on sampled events rather than counts of every event.
 
-Native lock profiling currently records mutex wait time only. It attaches to the
-kernel lock contention tracepoints when available and otherwise uses the mutex
-slow path. A PID or container target is mandatory to prevent accidental
-host-wide lock instrumentation.
+Native lock profiling records mutex or spinlock contention wait time. A PID or
+container target is mandatory. Mutex profiling uses the kernel lock contention
+tracepoints when available and otherwise uses the mutex slow path. Spinlock
+profiling requires the `lock:contention_begin` and `lock:contention_end`
+tracepoints introduced in Linux 5.19. It deliberately has no slow-path kprobe
+fallback because running BPF after a spinlock acquisition can stall the kernel.
 
 ```bash
 sudo _output/bin/profiler \
@@ -424,11 +427,12 @@ sudo _output/bin/profiler \
   --language c \
   --pid 12345 \
   --thread-group \
+  --lock-type spinlock \
   --lock-wait-threshold 10us \
   --duration 30 \
   --aggr-interval 10 \
   --output-format flamegraph \
-  --output-path ./profiles/mutex-wait
+  --output-path ./profiles/spinlock-wait
 ```
 
 ### 4. Observing Java

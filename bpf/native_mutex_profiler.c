@@ -8,9 +8,12 @@
 char __license[] SEC("license") = "Dual MIT/GPL";
 
 /* Flags exported by lock:contention_begin since Linux 5.19. */
+#define LCB_F_SPIN (1U << 0)
+#define LCB_F_READ (1U << 1)
+#define LCB_F_WRITE (1U << 2)
 #define LCB_F_MUTEX (1U << 5)
 
-static volatile const u64 mutex_wait_threshold_ns = 1000;
+static volatile const u64 lock_wait_threshold_ns = 1000;
 
 struct mutex_wait_start_t {
 	u64 started_ns;
@@ -20,6 +23,13 @@ struct mutex_wait_start_t {
 struct mutex_event_t {
 	struct profiler_event_base_t base;
 	u64 lock;
+};
+
+struct spin_wait_start_t {
+	struct mutex_event_t event;
+	u64 started_ns;
+	u64 transfer_count;
+	u8 active;
 };
 
 /*
@@ -33,6 +43,18 @@ struct {
 	__type(key, u64);
 	__type(value, struct mutex_wait_start_t);
 } mutex_wait_starts SEC(".maps");
+
+/*
+ * Spinning contenders cannot migrate or nest sleeping lock acquisition.
+ * A per-CPU slot matches perf lock's bounded correlation model and avoids a
+ * global hash update in the spinlock hot path.
+ */
+struct {
+	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+	__uint(max_entries, 1);
+	__type(key, u32);
+	__type(value, struct spin_wait_start_t);
+} spin_wait_starts SEC(".maps");
 
 DEFINE_PROFILER_MAPS(struct mutex_event_t);
 
@@ -64,7 +86,7 @@ static __always_inline int mutex_wait_end(void *ctx, u64 pid_tgid, bool success)
 		return 0;
 
 	u64 wait_ns = bpf_ktime_get_ns() - start.started_ns;
-	if (wait_ns < mutex_wait_threshold_ns)
+	if (wait_ns < lock_wait_threshold_ns)
 		return 0;
 
 	u64 *transfer_count_ptr;
@@ -94,6 +116,92 @@ static __always_inline int mutex_wait_end(void *ctx, u64 pid_tgid, bool success)
 	profiler_emit_event(ctx, select_profiler_output,
 			    select_profiler_sample_count_ptr, event,
 			    sizeof(*event));
+	return 0;
+}
+
+static __always_inline int spin_wait_begin(void *ctx, u64 lock)
+{
+	u64 pid_tgid = bpf_get_current_pid_tgid();
+	u64 cpu_css = current_task_cpu_css_addr();
+	if (!profiler_should_trace(pid_tgid, cpu_css))
+		return 0;
+
+	u64 *transfer_count_ptr;
+	u64 *sample_count_ptrs[2];
+	void *select_profiler_stack_map;
+
+	if (!profiler_init_state(&profiler_state_map, &transfer_count_ptr,
+				 sample_count_ptrs))
+		return 0;
+
+	u64 transfer_count = *transfer_count_ptr;
+	if ((transfer_count & 1ULL) == 0)
+		select_profiler_stack_map = (void *)&stack_map_a;
+	else
+		select_profiler_stack_map = (void *)&stack_map_b;
+
+	u32 idx = 0;
+	struct spin_wait_start_t *start =
+		bpf_map_lookup_elem(&spin_wait_starts, &idx);
+	if (!start)
+		return 0;
+
+	__builtin_memset(start, 0, sizeof(*start));
+	start->event.lock = lock;
+	start->started_ns = bpf_ktime_get_ns();
+	if (profiler_fill_event_base(&start->event.base, pid_tgid, ctx,
+				     select_profiler_stack_map) < 0)
+		return 0;
+	if (*transfer_count_ptr != transfer_count)
+		return 0;
+
+	start->transfer_count = transfer_count;
+	start->active = 1;
+	return 0;
+}
+
+static __always_inline int spin_wait_end(void *ctx, u64 lock, bool success)
+{
+	u32 idx = 0;
+	struct spin_wait_start_t *start =
+		bpf_map_lookup_elem(&spin_wait_starts, &idx);
+	if (!start || !start->active || start->event.lock != lock)
+		return 0;
+
+	struct mutex_event_t event = start->event;
+	u64 wait_ns = bpf_ktime_get_ns() - start->started_ns;
+	u64 transfer_count = start->transfer_count;
+	start->active = 0;
+	if (!success || wait_ns < lock_wait_threshold_ns)
+		return 0;
+
+	u64 *transfer_count_ptr;
+	u64 *sample_count_ptrs[2];
+	if (!profiler_init_state(&profiler_state_map, &transfer_count_ptr,
+				 sample_count_ptrs))
+		return 0;
+
+	/*
+	 * A drain flipped the stack/output pair during this wait. Dropping this
+	 * rare sample avoids publishing stack IDs into the wrong generation.
+	 */
+	if (*transfer_count_ptr != transfer_count)
+		return 0;
+
+	void *select_profiler_output;
+	u64 *select_profiler_sample_count_ptr;
+	if ((transfer_count & 1ULL) == 0) {
+		select_profiler_output = (void *)&profiler_output_a;
+		select_profiler_sample_count_ptr = sample_count_ptrs[0];
+	} else {
+		select_profiler_output = (void *)&profiler_output_b;
+		select_profiler_sample_count_ptr = sample_count_ptrs[1];
+	}
+
+	event.base.value = wait_ns;
+	profiler_emit_event(ctx, select_profiler_output,
+			    select_profiler_sample_count_ptr, &event,
+			    sizeof(event));
 	return 0;
 }
 
@@ -133,4 +241,19 @@ SEC("tracepoint/lock/contention_end")
 int trace_mutex_contention_end(struct lock_contention_end_ctx *ctx)
 {
 	return mutex_wait_end(ctx, bpf_get_current_pid_tgid(), ctx->ret == 0);
+}
+
+SEC("tracepoint/lock/contention_begin")
+int trace_spin_contention_begin(struct lock_contention_begin_ctx *ctx)
+{
+	if (!(ctx->flags & LCB_F_SPIN) ||
+	    (ctx->flags & (LCB_F_READ | LCB_F_WRITE)))
+		return 0;
+	return spin_wait_begin(ctx, ctx->lock_addr);
+}
+
+SEC("tracepoint/lock/contention_end")
+int trace_spin_contention_end(struct lock_contention_end_ctx *ctx)
+{
+	return spin_wait_end(ctx, ctx->lock_addr, ctx->ret == 0);
 }

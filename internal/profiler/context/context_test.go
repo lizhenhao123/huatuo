@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"github.com/urfave/cli/v2"
+
+	"huatuo-bamai/pkg/profiling"
 )
 
 func TestProfilerContextCancelStopsSignalListener(t *testing.T) {
@@ -45,5 +47,24 @@ func TestProfilerContextCancelStopsSignalListener(t *testing.T) {
 	case <-pctx.Ctx.Done():
 	case <-time.After(time.Second):
 		t.Fatal("ProfilerContext.Cancel() did not cancel context")
+	}
+}
+
+func TestLockTypeForType(t *testing.T) {
+	set := flag.NewFlagSet(t.Name(), flag.ContinueOnError)
+	set.String("lock-type", "spinlock", "")
+	cliCtx := cli.NewContext(nil, set, nil)
+
+	if got := lockTypeForType(
+		cliCtx,
+		profiling.TypeLock,
+	); got != profiling.LockTypeSpinlock {
+		t.Fatalf("lockTypeForType() = %q, want spinlock", got)
+	}
+	if got := lockTypeForType(
+		cliCtx,
+		profiling.TypeCPU,
+	); got != profiling.LockTypeUnknown {
+		t.Fatalf("lockTypeForType() = %q, want unknown", got)
 	}
 }

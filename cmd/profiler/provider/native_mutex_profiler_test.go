@@ -18,25 +18,26 @@ import (
 	"testing"
 
 	pcontext "huatuo-bamai/internal/profiler/context"
+	"huatuo-bamai/pkg/profiling"
 
 	"github.com/stretchr/testify/require"
 )
 
-func TestValidateMutexTarget(t *testing.T) {
-	require.NoError(t, validateMutexTarget(&pcontext.ProfilerContext{
+func TestValidateLockTarget(t *testing.T) {
+	require.NoError(t, validateLockTarget(&pcontext.ProfilerContext{
 		PIDs: []int{42},
 	}))
-	require.NoError(t, validateMutexTarget(&pcontext.ProfilerContext{
+	require.NoError(t, validateLockTarget(&pcontext.ProfilerContext{
 		ContainerID: "container",
 	}))
 	require.EqualError(
 		t,
-		validateMutexTarget(&pcontext.ProfilerContext{}),
+		validateLockTarget(&pcontext.ProfilerContext{}),
 		"native lock profiler requires exactly one PID or container target",
 	)
 	require.EqualError(
 		t,
-		validateMutexTarget(&pcontext.ProfilerContext{
+		validateLockTarget(&pcontext.ProfilerContext{
 			PIDs:        []int{42},
 			ContainerID: "container",
 		}),
@@ -45,38 +46,65 @@ func TestValidateMutexTarget(t *testing.T) {
 }
 
 func TestMutexAttachOptions(t *testing.T) {
-	oldTracepoints := hasMutexContentionTracepoints
+	oldTracepoints := hasLockContentionTracepoints
 	oldKprobe := hasMutexKprobeFunction
 	t.Cleanup(func() {
-		hasMutexContentionTracepoints = oldTracepoints
+		hasLockContentionTracepoints = oldTracepoints
 		hasMutexKprobeFunction = oldKprobe
 	})
 
-	hasMutexContentionTracepoints = func() bool { return true }
+	hasLockContentionTracepoints = func() bool { return true }
 	hasMutexKprobeFunction = func(string) bool { return false }
-	options, backend, err := mutexAttachOptions()
+	options, backend, err := lockAttachOptions(profiling.LockTypeMutex)
 	require.NoError(t, err)
-	require.Equal(t, mutexBackendContentionTracepoints, backend)
+	require.Equal(t, lockBackendContentionTracepoints, backend)
 	require.Len(t, options, 2)
 	require.Equal(t, "trace_mutex_contention_begin", options[0].ProgramName)
 
-	hasMutexContentionTracepoints = func() bool { return false }
+	hasLockContentionTracepoints = func() bool { return false }
 	hasMutexKprobeFunction = func(symbol string) bool {
 		return symbol == mutexSlowpathSymbol
 	}
-	options, backend, err = mutexAttachOptions()
+	options, backend, err = lockAttachOptions(profiling.LockTypeMutex)
 	require.NoError(t, err)
 	require.Equal(t, mutexBackendSlowpathKprobe, backend)
 	require.Len(t, options, 2)
 	require.Equal(t, mutexSlowpathSymbol, options[0].Symbol)
 
 	hasMutexKprobeFunction = func(string) bool { return false }
-	_, _, err = mutexAttachOptions()
+	_, _, err = lockAttachOptions(profiling.LockTypeMutex)
 	require.EqualError(
 		t,
 		err,
 		"kernel exposes neither lock contention tracepoints nor "+
 			mutexSlowpathSymbol,
+	)
+}
+
+func TestSpinlockAttachOptionsRequireContentionTracepoints(t *testing.T) {
+	oldTracepoints := hasLockContentionTracepoints
+	oldKprobe := hasMutexKprobeFunction
+	t.Cleanup(func() {
+		hasLockContentionTracepoints = oldTracepoints
+		hasMutexKprobeFunction = oldKprobe
+	})
+
+	hasLockContentionTracepoints = func() bool { return true }
+	hasMutexKprobeFunction = func(string) bool { return true }
+	options, backend, err := lockAttachOptions(profiling.LockTypeSpinlock)
+	require.NoError(t, err)
+	require.Equal(t, lockBackendContentionTracepoints, backend)
+	require.Equal(t, "trace_spin_contention_begin", options[0].ProgramName)
+	require.Equal(t, "trace_spin_contention_end", options[1].ProgramName)
+
+	hasLockContentionTracepoints = func() bool { return false }
+	_, _, err = lockAttachOptions(profiling.LockTypeSpinlock)
+	require.EqualError(
+		t,
+		err,
+		"spinlock contention requires lock:contention_begin/end "+
+			"tracepoints (Linux 5.19+); refusing unsafe "+
+			"spinlock slowpath probes",
 	)
 }
 

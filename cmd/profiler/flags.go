@@ -54,8 +54,13 @@ var appFlags = []cli.Flag{
 	},
 	&cli.DurationFlag{
 		Name:  "lock-wait-threshold",
-		Usage: "Minimum mutex contention wait to record",
+		Usage: "Minimum lock contention wait to record",
 		Value: time.Microsecond,
+	},
+	&cli.StringFlag{
+		Name:  "lock-type",
+		Usage: "Kernel lock type: mutex|spinlock",
+		Value: "mutex",
 	},
 	&cli.IntFlag{
 		Name:    "freq",

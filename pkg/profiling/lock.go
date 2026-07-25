@@ -26,6 +26,7 @@ const (
 type LockType string
 
 const (
-	LockTypeUnknown LockType = ""
-	LockTypeMutex   LockType = "mutex"
+	LockTypeUnknown  LockType = ""
+	LockTypeMutex    LockType = "mutex"
+	LockTypeSpinlock LockType = "spinlock"
 )

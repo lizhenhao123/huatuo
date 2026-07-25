@@ -36,9 +36,9 @@ import (
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/native_mutex_profiler.c -o $BPF_DIR/native_mutex_profiler.o
 
 const (
-	mutexBackendContentionTracepoints = "contention tracepoints"
-	mutexBackendSlowpathKprobe        = "mutex slowpath"
-	mutexSlowpathSymbol               = "__mutex_lock_slowpath"
+	lockBackendContentionTracepoints = "contention tracepoints"
+	mutexBackendSlowpathKprobe       = "mutex slowpath"
+	mutexSlowpathSymbol              = "__mutex_lock_slowpath"
 )
 
 type mutexEvent struct {
@@ -60,12 +60,13 @@ type mutexAggregateValue struct {
 }
 
 type mutexNativeProfiler struct {
-	bpf bpf.BPF
+	bpf      bpf.BPF
+	lockType profiling.LockType
 }
 
 var (
-	hasMutexKprobeFunction        = bpf.HasKprobeFunction
-	hasMutexContentionTracepoints = mutexContentionTracepointsAvailable
+	hasMutexKprobeFunction       = bpf.HasKprobeFunction
+	hasLockContentionTracepoints = lockContentionTracepointsAvailable
 )
 
 func init() {
@@ -73,7 +74,7 @@ func init() {
 	registry.Register(registry.ProfilerMeta{
 		Type:           profiling.TypeLock,
 		Implementation: profiling.ImplementationNative,
-		Description:    "Native kernel mutex contention profiler using eBPF",
+		Description:    "Native kernel lock contention profiler using eBPF",
 		Impl:           impl,
 		NewAggregator:  impl.NewAggregator,
 	})
@@ -86,14 +87,19 @@ func (p *mutexNativeProfiler) NewAggregator(
 }
 
 func (p *mutexNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
-	if err := validateMutexTarget(pctx); err != nil {
+	if err := validateLockTarget(pctx); err != nil {
 		return err
 	}
 	if err := requireRoot(); err != nil {
 		return err
 	}
-	if pctx.LockType != profiling.LockTypeMutex {
-		return fmt.Errorf("native lock profiler supports only mutex contention")
+	switch pctx.LockType {
+	case profiling.LockTypeMutex, profiling.LockTypeSpinlock:
+	default:
+		return fmt.Errorf(
+			"native lock profiler does not support lock type %q",
+			pctx.LockType,
+		)
 	}
 	if pctx.LockMode != profiling.LockModeWaitTime {
 		return fmt.Errorf("native lock profiler supports only wait-time mode")
@@ -111,24 +117,31 @@ func (p *mutexNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 		cssAddr,
 		pctx.ThreadGroup,
 	)
-	constants["mutex_wait_threshold_ns"] = uint64(pctx.LockWaitThreshold.Nanoseconds())
+	constants["lock_wait_threshold_ns"] = uint64(
+		pctx.LockWaitThreshold.Nanoseconds(),
+	)
 
-	attachOptions, backend, err := mutexAttachOptions()
+	attachOptions, backend, err := lockAttachOptions(pctx.LockType)
 	if err != nil {
 		return err
 	}
 
 	loaded, err := bpf.LoadBpf("native_mutex_profiler.o", constants)
 	if err != nil {
-		return fmt.Errorf("load native mutex profiler BPF: %w", err)
+		return fmt.Errorf("load native lock profiler BPF: %w", err)
 	}
 	if err := loaded.AttachWithOptions(attachOptions); err != nil {
 		_ = loaded.Close()
-		return fmt.Errorf("attach mutex contention probes: %w", err)
+		return fmt.Errorf("attach %s contention probes: %w", pctx.LockType, err)
 	}
 
 	p.bpf = loaded
-	log.Infof("native mutex contention profiler attached via %s", backend)
+	p.lockType = pctx.LockType
+	log.Infof(
+		"native %s contention profiler attached via %s",
+		pctx.LockType,
+		backend,
+	)
 	return nil
 }
 
@@ -163,7 +176,7 @@ func (p *mutexNativeProfiler) ReadDataLoop(
 		case <-ticker.C:
 		}
 
-		if err := drainMutexEvents(ringCtx, enqueue); err != nil {
+		if err := drainMutexEvents(ringCtx, p.lockType, enqueue); err != nil {
 			if errors.Is(err, types.ErrExitByCancelCtx) {
 				return nil
 			}
@@ -172,7 +185,7 @@ func (p *mutexNativeProfiler) ReadDataLoop(
 	}
 }
 
-func validateMutexTarget(pctx *pcontext.ProfilerContext) error {
+func validateLockTarget(pctx *pcontext.ProfilerContext) error {
 	if err := validateNativePIDs("lock", pctx.PIDs); err != nil {
 		return err
 	}
@@ -186,7 +199,7 @@ func validateMutexTarget(pctx *pcontext.ProfilerContext) error {
 	return nil
 }
 
-func mutexContentionTracepointsAvailable() bool {
+func lockContentionTracepointsAvailable() bool {
 	for _, root := range []string{
 		"/sys/kernel/tracing/events/lock",
 		"/sys/kernel/debug/tracing/events/lock",
@@ -201,20 +214,35 @@ func mutexContentionTracepointsAvailable() bool {
 	return false
 }
 
-func mutexAttachOptions() ([]bpf.AttachOption, string, error) {
-	if hasMutexContentionTracepoints() {
+func lockAttachOptions(
+	lockType profiling.LockType,
+) ([]bpf.AttachOption, string, error) {
+	if hasLockContentionTracepoints() {
+		beginProgram := "trace_mutex_contention_begin"
+		endProgram := "trace_mutex_contention_end"
+		if lockType == profiling.LockTypeSpinlock {
+			beginProgram = "trace_spin_contention_begin"
+			endProgram = "trace_spin_contention_end"
+		}
 		return []bpf.AttachOption{
 			{
-				ProgramName: "trace_mutex_contention_begin",
+				ProgramName: beginProgram,
 				Symbol:      "lock/contention_begin",
 			},
 			{
-				ProgramName: "trace_mutex_contention_end",
+				ProgramName: endProgram,
 				Symbol:      "lock/contention_end",
 			},
-		}, mutexBackendContentionTracepoints, nil
+		}, lockBackendContentionTracepoints, nil
 	}
 
+	if lockType == profiling.LockTypeSpinlock {
+		return nil, "", fmt.Errorf(
+			"spinlock contention requires lock:contention_begin/end " +
+				"tracepoints (Linux 5.19+); refusing unsafe " +
+				"spinlock slowpath probes",
+		)
+	}
 	if !hasMutexKprobeFunction(mutexSlowpathSymbol) {
 		return nil, "", fmt.Errorf(
 			"kernel exposes neither lock contention tracepoints nor %s",
@@ -235,6 +263,7 @@ func mutexAttachOptions() ([]bpf.AttachOption, string, error) {
 
 func drainMutexEvents(
 	ringCtx *ringBufferContext,
+	lockType profiling.LockType,
 	enqueue func(any),
 ) error {
 	ring, err := ringCtx.advanceSwapParity()
@@ -276,7 +305,7 @@ func drainMutexEvents(
 		return fmt.Errorf("reset mutex event count: %w", err)
 	}
 
-	enqueueMutexAggregates(ringCtx, ring, aggregates, enqueue)
+	enqueueMutexAggregates(ringCtx, ring, aggregates, lockType, enqueue)
 	return nil
 }
 
@@ -307,6 +336,7 @@ func enqueueMutexAggregates(
 	ringCtx *ringBufferContext,
 	ring activeRingBuffer,
 	aggregates map[mutexAggregateKey]mutexAggregateValue,
+	lockType profiling.LockType,
 	enqueue func(any),
 ) {
 	kstackCache := make(map[int32]string)
@@ -347,6 +377,7 @@ func enqueueMutexAggregates(
 			Kernel:    kstackCache[key.Kernstack],
 			WaitTime:  value.WaitTime,
 			Contended: value.Contended,
+			LockType:  lockType,
 		})
 	}
 }

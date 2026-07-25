@@ -287,6 +287,11 @@ func validateProfilerFlagCompatibility(ctx *cli.Context, lang profiling.Language
 			"--lock-wait-threshold is supported only by native lock profiling",
 		)
 	}
+	if ctx.IsSet("lock-type") && !nativeLock {
+		return fmt.Errorf(
+			"--lock-type is supported only by native lock profiling",
+		)
+	}
 	if ctx.String("binary-match-path") != "" && native {
 		return fmt.Errorf("--binary-match-path is not supported by native profilers")
 	}
@@ -302,6 +307,13 @@ func validateProfilerFlagCompatibility(ctx *cli.Context, lang profiling.Language
 		}
 	}
 	if nativeLock {
+		switch profiling.LockType(ctx.String("lock-type")) {
+		case profiling.LockTypeMutex, profiling.LockTypeSpinlock:
+		default:
+			return fmt.Errorf(
+				"--lock-type must be mutex or spinlock",
+			)
+		}
 		threshold := ctx.Duration("lock-wait-threshold")
 		if threshold < 0 || threshold > time.Hour {
 			return fmt.Errorf(
