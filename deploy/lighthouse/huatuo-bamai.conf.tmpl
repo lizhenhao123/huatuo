@@ -1,0 +1,53 @@
+BlackList = [
+    "arp", "ascend_npu", "cpu_stat", "cpu_util", "dload", "dropwatch",
+    "hungtask", "iolatency", "iotracing", "loadavg", "memburst",
+    "memory_buddyinfo", "memory_events", "memory_free", "memory_others",
+    "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "metax_gpu",
+    "mountpoint_perm", "net_rx_latency", "netdev", "netdev_bonding_lacp",
+    "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc",
+    "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "oom", "ras",
+    "runqlat", "sockstat", "softirq", "softirq_tracing", "softlockup",
+    "tcp_memory"
+]
+
+[Log]
+Level = "Info"
+File = ""
+
+[APIServer]
+TCPAddr = "127.0.0.1:19704"
+
+[RuntimeCgroup]
+LimitInitCPU = 0.5
+LimitCPU = 1.0
+LimitMem = 768
+
+[Storage.ES]
+Address = "http://127.0.0.1:9200"
+Index = "huatuo_bamai"
+Username = "elastic"
+Password = "__ELASTIC_PASSWORD__"
+
+[Storage.LocalFile]
+Path = "/var/lib/huatuo"
+RotationSize = 50
+MaxRotation = 3
+
+[Task]
+MaxRunningTask = 2
+
+[EventsWatch]
+MaxClients = 10
+KeepAliveInterval = 30
+
+[Pod]
+KubeletReadOnlyPort = 0
+KubeletAuthorizedPort = 0
+KubeletClientCertPath = ""
+DockerAPIVersion = "1.24"
+
+[AutoTracing]
+IssuesList = []
+
+[EventTracing]
+IssuesList = []

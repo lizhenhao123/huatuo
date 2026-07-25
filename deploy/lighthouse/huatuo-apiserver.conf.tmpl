@@ -1,0 +1,37 @@
+LogLevel = "Info"
+
+[RuntimeCgroup]
+LimitCPU = 1
+LimitMem = 384
+
+[APIServer]
+TCPAddr = "127.0.0.1:12740"
+RateLimit = 100
+RateBurst = 100
+
+[TaskConfig]
+MaxProfilingTasksPerHost = 2
+MaxTracingTasksPerHost = 2
+MaxTotalProfilingTasks = 2
+MaxTotalTracingTasks = 2
+JobStoreDSN = "/var/lib/huatuo-apiserver/jobs.db"
+
+[Agent]
+Port = 19704
+
+[ElasticSearch]
+Address = "http://127.0.0.1:9200"
+Username = "elastic"
+Password = "__ELASTIC_PASSWORD__"
+Index = "huatuo_bamai"
+
+[[Auth.users]]
+ID = "__API_ADMIN_TOKEN__"
+Name = "Lighthouse Administrator"
+IsAdmin = true
+
+[Profiling]
+AggregationInterval = 10
+ExecutionTimeout = 30
+MaxProfilerProcs = 2
+FlameGraphBaseURL = "http://127.0.0.1:3000/d"

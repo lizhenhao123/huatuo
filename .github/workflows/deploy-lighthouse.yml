@@ -1,0 +1,136 @@
+name: deploy Lighthouse
+
+on:
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: Commit on main to deploy
+        required: true
+        type: string
+      image_tag:
+        description: Immutable huatuo-bamai-static image tag
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lighthouse-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy with TencentCloud TAT
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: lighthouse-production
+    env:
+      TENCENTCLOUD_SECRET_ID: ${{ secrets.TENCENTCLOUD_SECRET_ID }}
+      TENCENTCLOUD_SECRET_KEY: ${{ secrets.TENCENTCLOUD_SECRET_KEY }}
+      TENCENTCLOUD_REGION: ${{ vars.TENCENTCLOUD_REGION }}
+      LIGHTHOUSE_INSTANCE_ID: ${{ vars.LIGHTHOUSE_INSTANCE_ID }}
+      LIGHTHOUSE_TAT_COMMAND_ID: ${{ vars.LIGHTHOUSE_TAT_COMMAND_ID }}
+    steps:
+      - name: Checkout requested revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.revision }}
+          fetch-depth: 0
+
+      - name: Verify production revision and image tag
+        id: release
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          revision=$(git rev-parse HEAD)
+          git merge-base --is-ancestor "${revision}" origin/main
+          if [[ ! "${IMAGE_TAG}" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+            echo "image_tag contains unsupported characters" >&2
+            exit 1
+          fi
+          if [[ -z "${TENCENTCLOUD_REGION}" ||
+            -z "${LIGHTHOUSE_INSTANCE_ID}" ||
+            -z "${LIGHTHOUSE_TAT_COMMAND_ID}" ]]; then
+            echo "Lighthouse repository environment variables are missing" >&2
+            exit 1
+          fi
+          echo "revision=${revision}" >>"${GITHUB_OUTPUT}"
+
+      - name: Install TencentCloud CLI
+        run: pipx install tccli
+
+      - name: Invoke deployment through TAT
+        id: invocation
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          REVISION: ${{ steps.release.outputs.revision }}
+        run: |
+          set -euo pipefail
+          parameters=$(jq -cn \
+            --arg revision "${REVISION}" \
+            --arg image_tag "${IMAGE_TAG}" \
+            '{revision: $revision, image_tag: $image_tag}')
+          jq -n \
+            --arg command "${LIGHTHOUSE_TAT_COMMAND_ID}" \
+            --arg instance "${LIGHTHOUSE_INSTANCE_ID}" \
+            --arg parameters "${parameters}" \
+            '{
+              CommandId: $command,
+              InstanceIds: [$instance],
+              Parameters: $parameters,
+              WorkingDirectory: "/home/ubuntu",
+              Username: "ubuntu",
+              Timeout: 1200
+            }' >"${RUNNER_TEMP}/invoke-command.json"
+          response=$(tccli tat InvokeCommand \
+            --cli-input-json "file://${RUNNER_TEMP}/invoke-command.json")
+          invocation_id=$(jq -er '.Response.InvocationId' <<<"${response}")
+          echo "invocation_id=${invocation_id}" >>"${GITHUB_OUTPUT}"
+
+      - name: Wait for deployment
+        env:
+          INVOCATION_ID: ${{ steps.invocation.outputs.invocation_id }}
+        run: |
+          set -euo pipefail
+          jq -n --arg id "${INVOCATION_ID}" \
+            '{InvocationIds: [$id], Limit: 1}' \
+            >"${RUNNER_TEMP}/describe-invocation.json"
+          status=""
+          for _ in $(seq 1 120); do
+            response=$(tccli tat DescribeInvocations \
+              --cli-input-json \
+              "file://${RUNNER_TEMP}/describe-invocation.json")
+            status=$(jq -er \
+              '.Response.InvocationSet[0].InvocationStatus' \
+              <<<"${response}")
+            case "${status}" in
+              SUCCESS)
+                break
+                ;;
+              FAILED|TIMEOUT|CANCELLED|PARTIAL_FAILED|PARTIAL_CANCELLED)
+                break
+                ;;
+            esac
+            sleep 10
+          done
+
+          jq -n --arg id "${INVOCATION_ID}" \
+            '{
+              Filters: [{Name: "invocation-id", Values: [$id]}],
+              Limit: 10,
+              HideOutput: false
+            }' >"${RUNNER_TEMP}/describe-tasks.json"
+          task_response=$(tccli tat DescribeInvocationTasks \
+            --cli-input-json "file://${RUNNER_TEMP}/describe-tasks.json")
+          jq -r '.Response.InvocationTaskSet[].TaskResult.Output // empty' \
+            <<<"${task_response}" | while IFS= read -r output; do
+              printf '%s' "${output}" | base64 --decode
+            done
+
+          if [[ "${status}" != "SUCCESS" ]]; then
+            echo "TAT deployment ended with status ${status:-UNKNOWN}" >&2
+            exit 1
+          fi

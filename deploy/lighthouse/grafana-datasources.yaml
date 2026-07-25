@@ -1,0 +1,31 @@
+apiVersion: 1
+
+prune: true
+
+datasources:
+  - name: huatuo-bamai-es
+    type: elasticsearch
+    uid: huatuo-bamai-es
+    access: proxy
+    orgId: 1
+    url: http://127.0.0.1:9200
+    user: elastic
+    jsonData:
+      index: huatuo_bamai*
+      timeField: uploaded_time
+    secureJsonData:
+      password: $ELASTIC_PASSWORD
+    editable: false
+
+  - name: huatuo-apiserver-pyroscope
+    type: grafana-pyroscope-datasource
+    uid: huatuo-apiserver-pyroscope
+    access: proxy
+    orgId: 1
+    url: http://127.0.0.1:12740/v1/profiles/flamegraph/
+    jsonData:
+      minStep: 15s
+      httpHeaderName1: Authorization
+    secureJsonData:
+      httpHeaderValue1: Bearer $API_ADMIN_TOKEN
+    editable: false
