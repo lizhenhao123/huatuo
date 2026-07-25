@@ -21,6 +21,7 @@ import (
 
 	v1 "huatuo-bamai/apis/v1"
 	"huatuo-bamai/internal/job"
+	profiletypes "huatuo-bamai/pkg/profiling"
 )
 
 func TestBuildCreateProfilingJobRequest(t *testing.T) {
@@ -100,6 +101,30 @@ func TestBuildCreateProfilingJobRequest(t *testing.T) {
 			},
 		},
 		{
+			name: "mutex wait profiling by PID",
+			req: v1.CreateProfilingJobRequest{
+				ProfilingType:     "lock",
+				Language:          "go",
+				Duration:          30,
+				PID:               4242,
+				LockMode:          profiletypes.LockModeWaitTime,
+				LockType:          profiletypes.LockTypeMutex,
+				LockWaitThreshold: "10us",
+			},
+			wantType: ProfilingLock,
+			wantTracerArgs: []string{
+				"-t", "lock",
+				"-l", "go",
+				"--lock-wait-threshold", "10us",
+				"--pid", "4242",
+				"--duration", "30",
+				"--aggr-interval", "10",
+				"--max-concurrent-procs", "2",
+				"--output-format", "remote",
+				"--output-storage", "/var/run/huatuo-toolstream.sock",
+			},
+		},
+		{
 			name: "native PID and container are mutually exclusive",
 			req: v1.CreateProfilingJobRequest{
 				ProfilingType: "cpu",
@@ -151,6 +176,111 @@ func TestBuildCreateProfilingJobRequest(t *testing.T) {
 				PID:           4242,
 			},
 			wantErr: "pid, cpu_ids, and thread_group are supported only by native profiling",
+		},
+		{
+			name: "mutex wait profiling by container uses defaults",
+			req: v1.CreateProfilingJobRequest{
+				ProfilingType: "lock",
+				Language:      "c++",
+				Duration:      30,
+				ContainerID:   "0123456789abcdef",
+			},
+			wantType: ProfilingLock,
+			wantTracerArgs: []string{
+				"-t", "lock",
+				"-l", "c++",
+				"--lock-wait-threshold", "1us",
+				"--container-id", "0123456789abcdef",
+				"--duration", "30",
+				"--aggr-interval", "10",
+				"--max-concurrent-procs", "2",
+				"--output-format", "remote",
+				"--output-storage", "/var/run/huatuo-toolstream.sock",
+			},
+		},
+		{
+			name: "lock profiling rejects host-wide target",
+			req: v1.CreateProfilingJobRequest{
+				ProfilingType: "lock",
+				Language:      "c",
+				Duration:      30,
+			},
+			wantErr: "lock profiling requires exactly one of pid or container_id",
+		},
+		{
+			name: "lock profiling rejects multiple targets",
+			req: v1.CreateProfilingJobRequest{
+				ProfilingType: "lock",
+				Language:      "c",
+				Duration:      30,
+				PID:           4242,
+				ContainerID:   "0123456789abcdef",
+			},
+			wantErr: "lock profiling requires exactly one of pid or container_id",
+		},
+		{
+			name: "lock profiling rejects non-native language",
+			req: v1.CreateProfilingJobRequest{
+				ProfilingType: "lock",
+				Language:      "java",
+				Duration:      30,
+				PID:           4242,
+			},
+			wantErr: `lock profiling not supported for "java"`,
+		},
+		{
+			name: "lock profiling rejects negative PID",
+			req: v1.CreateProfilingJobRequest{
+				ProfilingType: "lock",
+				Language:      "go",
+				Duration:      30,
+				PID:           -1,
+			},
+			wantErr: "pid must be between 1 and 2147483647",
+		},
+		{
+			name: "lock profiling rejects invalid threshold",
+			req: v1.CreateProfilingJobRequest{
+				ProfilingType:     "lock",
+				Language:          "go",
+				Duration:          30,
+				PID:               4242,
+				LockWaitThreshold: "later",
+			},
+			wantErr: `invalid lock_wait_threshold "later": time: invalid duration "later"`,
+		},
+		{
+			name: "lock profiling rejects unsupported mode",
+			req: v1.CreateProfilingJobRequest{
+				ProfilingType: "lock",
+				Language:      "go",
+				Duration:      30,
+				PID:           4242,
+				LockMode:      profiletypes.LockMode("count"),
+			},
+			wantErr: `unsupported lock mode "count"`,
+		},
+		{
+			name: "lock profiling rejects unsupported lock type",
+			req: v1.CreateProfilingJobRequest{
+				ProfilingType: "lock",
+				Language:      "go",
+				Duration:      30,
+				PID:           4242,
+				LockType:      profiletypes.LockType("spinlock"),
+			},
+			wantErr: `unsupported lock type "spinlock"`,
+		},
+		{
+			name: "lock profiling rejects thread group target",
+			req: v1.CreateProfilingJobRequest{
+				ProfilingType: "lock",
+				Language:      "go",
+				Duration:      30,
+				PID:           4242,
+				ThreadGroup:   true,
+			},
+			wantErr: "thread_group is not supported by lock profiling",
 		},
 		{
 			name: "native memory requires a target",
@@ -237,10 +367,11 @@ func TestBuildProfilingJobQueries(t *testing.T) {
 				Hostname:    "huatuo-dev",
 				Status:      string(job.JobStatusRunning),
 			},
-			wantTypes: []job.JobType{ProfilingMemory, ProfilingCPU},
+			wantTypes: []job.JobType{ProfilingMemory, ProfilingCPU, ProfilingLock},
 		},
 		{name: "cpu profiling", query: profilingJobListQuery{Type: "cpu"}, wantTypes: []job.JobType{ProfilingCPU}},
 		{name: "memory profiling", query: profilingJobListQuery{Type: "memory"}, wantTypes: []job.JobType{ProfilingMemory}},
+		{name: "lock profiling", query: profilingJobListQuery{Type: "lock"}, wantTypes: []job.JobType{ProfilingLock}},
 		{name: "invalid type", query: profilingJobListQuery{Type: "offcpu"}, wantErr: `invalid type "offcpu"`},
 		{name: "invalid status", query: profilingJobListQuery{Status: "unknown"}, wantErr: `invalid status "unknown"`},
 	}
